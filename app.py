@@ -31,10 +31,11 @@ STRICT RULES:
 8. Minimum 1,200 words. Use clean HTML for WordPress (h1, h2, h3, p, strong, ul, li tags only).
 9. Tone: authoritative, direct, no fluff, written for serious investors not casual readers.
 
-Output ONLY a valid JSON object — no markdown fences, no preamble:
+Output ONLY a valid JSON object — no markdown fences, no preamble, no citation markers.
+CRITICAL JSON RULES: All double quotes inside string values must be escaped as \". All newlines inside string values must be escaped as \n. Do not use unescaped special characters inside JSON strings.
 {
   "title": "H1 Headline Here",
-  "main_content": "Full WordPress HTML content here"
+  "main_content": "Full WordPress HTML content here with \" escaped quotes and \\n newlines"
 }
 """
 
@@ -77,7 +78,8 @@ X / TWITTER: Punchy hook-first post under 280 chars with 1-2 hashtags.
 FACEBOOK: Community investor tone, ends with engaging question + hashtags.
 PINTEREST: SEO keyword string.
 
-Output ONLY a valid JSON object — no markdown fences, no preamble:
+Output ONLY a valid JSON object — no markdown fences, no preamble, no citation markers.
+CRITICAL JSON RULES: All double quotes inside string values must be escaped as \". All newlines inside string values must be escaped as \n.
 {
   "substack_text": "...",
   "medium_text": "...",
@@ -155,18 +157,55 @@ def call_perplexity(messages: list, model: str = "sonar-pro") -> str:
     return response.json()["choices"][0]["message"]["content"]
 
 
+def safe_parse_json(text: str) -> dict:
+    """
+    Robustly extract and parse JSON from Perplexity responses.
+    Handles unescaped quotes, stray newlines, and markdown fences.
+    """
+    # Strip markdown fences if present
+    text = re.sub(r'```json|```', '', text).strip()
+
+    # Extract outermost { ... } block
+    s, e = text.find('{'), text.rfind('}')
+    if s == -1 or e == -1:
+        raise ValueError("No JSON object found in response.")
+    text = text[s:e+1]
+
+    # First attempt: parse as-is
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+
+    # Second attempt: use regex to extract each key-value pair individually
+    # This handles cases where Perplexity puts raw HTML or unescaped text in values
+    result = {}
+    pattern = re.compile(
+        r'"(\w+)"\s*:\s*"((?:[^"\\]|\\.)*)"',
+        re.DOTALL
+    )
+    for match in pattern.finditer(text):
+        key = match.group(1)
+        value = match.group(2)
+        # Unescape standard JSON escapes
+        value = value.replace('\\"', '"').replace('\\n', '\n').replace('\\t', '\t')
+        result[key] = value
+
+    if result:
+        return result
+
+    raise ValueError(f"Could not parse JSON from response. Raw text snippet: {text[:300]}")
+
+
 def generate_article(raw_input: str) -> dict:
     messages = [
         {"role": "system", "content": WRITING_PROMPT},
         {"role": "user",   "content": f"Raw news seed:\n{raw_input}"}
     ]
     text = call_perplexity(messages, model="sonar-pro")
-    text = text.strip()
-    s, e = text.find('{'), text.rfind('}')
-    if s != -1 and e != -1:
-        text = text[s:e+1]
-    parsed = json.loads(text)
-    result = parsed[0] if isinstance(parsed, list) else parsed
+    result = safe_parse_json(text)
+    if isinstance(result, list):
+        result = result[0]
     if "main_content" in result:
         result["main_content"] = strip_citations(result["main_content"])
     if "title" in result:
@@ -180,11 +219,9 @@ def generate_distribution(title: str, content: str) -> dict:
         {"role": "user",   "content": f"Article title: {title}\n\nFull article content:\n{content}"}
     ]
     text = call_perplexity(messages, model="sonar")
-    text = text.strip()
-    s, e = text.find('{'), text.rfind('}')
-    if s != -1 and e != -1:
-        text = text[s:e+1]
-    result = json.loads(text)
+    result = safe_parse_json(text)
+    if isinstance(result, list):
+        result = result[0]
     return {k: strip_citations(v) if isinstance(v, str) else v for k, v in result.items()}
 
 
