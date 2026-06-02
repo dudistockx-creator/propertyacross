@@ -32,7 +32,7 @@ STRICT RULES:
 9. Tone: authoritative, direct, no fluff, written for serious investors not casual readers.
 
 Output ONLY a valid JSON object — no markdown fences, no preamble, no citation markers.
-CRITICAL JSON RULES: All double quotes inside string values must be escaped as \". All newlines inside string values must be escaped as \n. Do not use unescaped special characters inside JSON strings.
+CRITICAL: Do NOT escape quotes or characters inside JSON string values. Write natural text. Output clean JSON only.
 {
   "title": "H1 Headline Here",
   "main_content": "Full WordPress HTML content here with \" escaped quotes and \\n newlines"
@@ -79,7 +79,7 @@ FACEBOOK: Community investor tone, ends with engaging question + hashtags.
 PINTEREST: SEO keyword string.
 
 Output ONLY a valid JSON object — no markdown fences, no preamble, no citation markers.
-CRITICAL JSON RULES: All double quotes inside string values must be escaped as \". All newlines inside string values must be escaped as \n.
+CRITICAL: Do NOT escape quotes or characters inside JSON string values. Write natural text. Output clean JSON only.
 {
   "substack_text": "...",
   "medium_text": "...",
@@ -133,8 +133,11 @@ for key in ["generation_ready", "push_success", "active_title",
 # ── Pipeline functions ────────────────────────────────────────────
 
 def strip_citations(text: str) -> str:
-    """Remove Perplexity citation markers like [1], [2][3], [1][2][3] from text."""
-    return re.sub(r'(\[\d+\])+', '', text).strip()
+    """Remove Perplexity citation markers and unescape JSON-escaped characters."""
+    text = re.sub(r'(\[\d+\])+', '', text)
+    text = text.replace('\"', '"').replace("\'", "'")
+    text = text.replace('\\n', '\n').replace('\\t', '\t')
+    return text.strip()
 
 
 def call_perplexity(messages: list, model: str = "sonar-pro") -> str:
@@ -230,7 +233,10 @@ def push_to_wordpress(title: str, content: str, dist: dict) -> bool:
     token = base64.b64encode(f"{WP_USERNAME}:{WP_APP_PASSWORD}".encode()).decode()
     headers = {
         "Authorization": f"Basic {token}",
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Accept": "application/json",
+        "X-Requested-With": "XMLHttpRequest",
     }
     payload = {
         "title":   title,
