@@ -2,6 +2,7 @@ import streamlit as st
 import json
 import base64
 import requests
+import re
 from dotenv import load_dotenv
 import os
 
@@ -129,6 +130,11 @@ for key in ["generation_ready", "push_success", "active_title",
 
 # ── Pipeline functions ────────────────────────────────────────────
 
+def strip_citations(text: str) -> str:
+    """Remove Perplexity citation markers like [1], [2][3], [1][2][3] from text."""
+    return re.sub(r'(\[\d+\])+', '', text).strip()
+
+
 def call_perplexity(messages: list, model: str = "sonar-pro") -> str:
     response = requests.post(
         "https://api.perplexity.ai/chat/completions",
@@ -160,7 +166,12 @@ def generate_article(raw_input: str) -> dict:
     if s != -1 and e != -1:
         text = text[s:e+1]
     parsed = json.loads(text)
-    return parsed[0] if isinstance(parsed, list) else parsed
+    result = parsed[0] if isinstance(parsed, list) else parsed
+    if "main_content" in result:
+        result["main_content"] = strip_citations(result["main_content"])
+    if "title" in result:
+        result["title"] = strip_citations(result["title"])
+    return result
 
 
 def generate_distribution(title: str, content: str) -> dict:
@@ -173,7 +184,8 @@ def generate_distribution(title: str, content: str) -> dict:
     s, e = text.find('{'), text.rfind('}')
     if s != -1 and e != -1:
         text = text[s:e+1]
-    return json.loads(text)
+    result = json.loads(text)
+    return {k: strip_citations(v) if isinstance(v, str) else v for k, v in result.items()}
 
 
 def push_to_wordpress(title: str, content: str, dist: dict) -> bool:
