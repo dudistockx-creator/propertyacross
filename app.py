@@ -90,6 +90,24 @@ CRITICAL: Do NOT escape quotes or characters inside JSON string values. Write na
 }
 """
 
+SEO_PROMPT = """
+You are an expert SEO specialist for PropertyAcross.com.
+Given the article title and content below, generate three SEO fields.
+
+RULES:
+- seo_title: Maximum 60 characters. Compelling, keyword-rich, includes the primary location and asset type. No clickbait.
+- seo_description: Maximum 155 characters. One punchy sentence summarising the investment opportunity and key data point. Must make someone want to click.
+- seo_tags: 8-12 comma-separated keyword tags. Mix of broad terms (e.g. real estate investment 2026) and specific micro-topic terms (e.g. Park City commercial property yield). No hashtags, no quotes around individual tags.
+
+Output ONLY a valid JSON object — no markdown fences, no preamble, no citation markers.
+CRITICAL: Do NOT escape quotes or characters inside JSON string values. Write natural text. Output clean JSON only.
+{
+  "seo_title": "Max 60 char SEO title here",
+  "seo_description": "Max 155 char meta description here",
+  "seo_tags": "tag one, tag two, tag three, tag four"
+}
+"""
+
 # ── Streamlit config ──────────────────────────────────────────────
 
 st.set_page_config(
@@ -125,7 +143,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 for key in ["generation_ready", "push_success", "active_title",
-            "active_content", "dist_data"]:
+            "active_content", "dist_data", "seo_data"]:
     if key not in st.session_state:
         st.session_state[key] = False if key in ["generation_ready", "push_success"] else None
 
@@ -228,7 +246,27 @@ def generate_distribution(title: str, content: str) -> dict:
     return {k: strip_citations(v) if isinstance(v, str) else v for k, v in result.items()}
 
 
-def push_to_wordpress(title: str, content: str, dist: dict) -> bool:
+def generate_seo(title: str, content: str) -> dict:
+    messages = [
+        {"role": "system", "content": SEO_PROMPT},
+        {"role": "user",   "content": f"Article title: {title}\n\nArticle content:\n{content[:3000]}"}
+    ]
+    text = call_perplexity(messages, model="sonar")
+    result = safe_parse_json(text)
+    if isinstance(result, list):
+        result = result[0]
+    # Enforce character limits hard
+    seo_title = strip_citations(result.get("seo_title", ""))[:60]
+    seo_desc  = strip_citations(result.get("seo_description", ""))[:155]
+    seo_tags  = strip_citations(result.get("seo_tags", ""))
+    return {
+        "seo_title":       seo_title,
+        "seo_description": seo_desc,
+        "seo_tags":        seo_tags,
+    }
+
+
+def push_to_wordpress(title: str, content: str, dist: dict, seo: dict) -> bool:
     url = f"{WP_URL}/posts"
     token = base64.b64encode(f"{WP_USERNAME}:{WP_APP_PASSWORD}".encode()).decode()
     headers = {
@@ -243,12 +281,16 @@ def push_to_wordpress(title: str, content: str, dist: dict) -> bool:
         "content": content,
         "status":  "draft",
         "meta": {
-            "substack_text":  dist.get("substack_text", ""),
-            "medium_text":    dist.get("medium_text", ""),
-            "linkedin_copy":  dist.get("linkedin_copy", ""),
-            "x_copy":         dist.get("x_copy", ""),
-            "facebook_copy":  dist.get("facebook_copy", ""),
-            "pinterest_copy": dist.get("pinterest_copy", ""),
+            "substack_text":        dist.get("substack_text", ""),
+            "medium_text":          dist.get("medium_text", ""),
+            "linkedin_copy":        dist.get("linkedin_copy", ""),
+            "x_copy":               dist.get("x_copy", ""),
+            "facebook_copy":        dist.get("facebook_copy", ""),
+            "pinterest_copy":       dist.get("pinterest_copy", ""),
+            "_yoast_wpseo_title":   seo.get("seo_title", ""),
+            "_yoast_wpseo_metadesc":seo.get("seo_description", ""),
+            "rank_math_focus_keyword": seo.get("seo_tags", ""),
+            "_yoast_wpseo_focuskw": seo.get("seo_tags", "").split(",")[0].strip() if seo.get("seo_tags") else "",
         }
     }
     try:
@@ -291,6 +333,7 @@ with col_left:
     st.markdown("#### ⚙️ Pipeline stages")
     s1 = st.empty()
     s2 = st.empty()
+    s3 = st.empty()
 
     def stage(slot, label, state="pending"):
         icon = {"pending": "🔘", "active": "🔵", "done": "✅", "error": "❌"}
@@ -298,6 +341,7 @@ with col_left:
 
     stage(s1, "Article — Perplexity sonar-pro + web search")
     stage(s2, "Newsletters & socials — Perplexity sonar")
+    stage(s3, "SEO title, description & tags — Perplexity sonar")
 
 
 # ── Pipeline execution ────────────────────────────────────────────
@@ -324,6 +368,15 @@ if run and seed.strip():
                 )
                 st.session_state.dist_data = dist
                 stage(s2, "Newsletters & socials — Perplexity sonar", "done")
+
+                stage(s3, "SEO title, description & tags — Perplexity sonar", "active")
+                status.update(label="🔍 Stage 3: Generating SEO fields...")
+                seo = generate_seo(
+                    st.session_state.active_title,
+                    st.session_state.active_content
+                )
+                st.session_state.seo_data = seo
+                stage(s3, "SEO title, description & tags — Perplexity sonar", "done")
 
                 st.session_state.generation_ready = True
                 status.update(label="✅ All assets ready — review below.", state="complete", expanded=False)
@@ -355,7 +408,8 @@ if st.session_state.generation_ready:
                 success = push_to_wordpress(
                     st.session_state.active_title,
                     st.session_state.active_content,
-                    st.session_state.dist_data
+                    st.session_state.dist_data,
+                    st.session_state.seo_data or {}
                 )
                 if success:
                     st.session_state.push_success = True
@@ -364,8 +418,8 @@ if st.session_state.generation_ready:
 
         st.markdown("---")
 
-        tab_art, tab_nl, tab_soc = st.tabs([
-            "📝 Article", "📧 Newsletters", "💼 Socials"
+        tab_art, tab_nl, tab_soc, tab_seo = st.tabs([
+            "📝 Article", "📧 Newsletters", "💼 Socials", "🔍 SEO"
         ])
 
         with tab_art:
@@ -394,3 +448,28 @@ if st.session_state.generation_ready:
             st.markdown("---")
             st.markdown("**📌 Pinterest**")
             st.caption(dist.get("pinterest_copy", ""))
+
+        with tab_seo:
+            seo = st.session_state.seo_data or {}
+
+            st.markdown("**🏷️ SEO Title**")
+            seo_title = seo.get("seo_title", "")
+            st.code(seo_title, language="text")
+            char_count = len(seo_title)
+            colour = "green" if char_count <= 60 else "red"
+            st.markdown(f":{colour}[{char_count}/60 characters]")
+
+            st.markdown("---")
+            st.markdown("**📄 Meta Description**")
+            seo_desc = seo.get("seo_description", "")
+            st.code(seo_desc, language="text")
+            char_count2 = len(seo_desc)
+            colour2 = "green" if char_count2 <= 155 else "red"
+            st.markdown(f":{colour2}[{char_count2}/155 characters]")
+
+            st.markdown("---")
+            st.markdown("**🔖 SEO Tags**")
+            seo_tags = seo.get("seo_tags", "")
+            st.code(seo_tags, language="text")
+            tag_list = [t.strip() for t in seo_tags.split(",") if t.strip()]
+            st.markdown(f"*{len(tag_list)} tags generated*")
