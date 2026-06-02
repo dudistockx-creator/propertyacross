@@ -2,71 +2,92 @@ import streamlit as st
 import json
 import base64
 import requests
-import time
-from io import BytesIO
-from google import genai
-from google.genai import types
 from dotenv import load_dotenv
 import os
 
 load_dotenv()
 
-# ── Credentials from .env ─────────────────────────────────────────
-GEMINI_API_KEY   = os.getenv("GEMINI_API_KEY", "")
-WP_URL           = os.getenv("WP_URL", "")
-WP_USERNAME      = os.getenv("WP_USERNAME", "admin")
-WP_APP_PASSWORD  = os.getenv("WP_APP_PASSWORD", "")
+PERPLEXITY_API_KEY = os.getenv("PERPLEXITY_API_KEY", "")
+WP_URL             = os.getenv("WP_URL", "")
+WP_USERNAME        = os.getenv("WP_USERNAME", "admin")
+WP_APP_PASSWORD    = os.getenv("WP_APP_PASSWORD", "")
 
 # ── Prompts ───────────────────────────────────────────────────────
-WRITING_PROMPT = """
-You are the Lead SEO Architect for PropertyAcross.com.
-Given the raw news seed below, generate ONE comprehensive, evidence-based real estate article.
 
-Rules:
-1. Define a micro-topic cluster: [Country/City] + [Asset Niche] + [Intent: yield-seeking | lifestyle | CBI/residency] + [2026]
-2. Write a question-based H1 headline targeting core investor benefits.
-3. Build the body with question-based H2/H3 subheadings (e.g. "What rental yields can investors expect?").
-4. Under each heading: 2–4 short scannable paragraphs, direct answers, backed by hard statistics.
-5. Conclude with an FAQ block of 5–7 high-volume Q&As.
-6. Minimum 1,000 words. Use HTML formatting for WordPress (h1, h2, h3, p, strong tags only).
+WRITING_PROMPT = """
+You are the Lead SEO Architect for PropertyAcross.com — a premium global real estate investment publication.
+
+Using the raw news seed below AND your live web search capabilities, generate ONE comprehensive, evidence-based real estate article enriched with current market data, recent statistics, and cited sources.
+
+STRICT RULES:
+1. Search the web for the latest data, yield figures, price points, and market statistics related to the topic.
+2. Define a micro-topic cluster: [Country/City] + [Asset Niche] + [Intent: yield-seeking | lifestyle | CBI/residency] + [2026]
+3. Write a bold, specific, question-based H1 headline that directly addresses investor benefit.
+4. Build the body with question-based H2/H3 subheadings pulling from real investor concerns.
+5. Under each heading: 2–4 short scannable paragraphs, direct answers, backed by hard statistics, yield figures, price points, and historical comparisons sourced from your web search.
+6. Every key claim MUST be backed by a concrete number, percentage, or data point with a source reference.
+7. Conclude with a rich FAQ block of 5–7 high-volume Q&As mirroring common search queries.
+8. Minimum 1,200 words. Use clean HTML for WordPress (h1, h2, h3, p, strong, ul, li tags only).
+9. Tone: authoritative, direct, no fluff, written for serious investors not casual readers.
 
 Output ONLY a valid JSON object — no markdown fences, no preamble:
 {
   "title": "H1 Headline Here",
-  "main_content": "Full WordPress HTML content here",
-  "image_prompt_16_9": "Cinematic 16:9 real estate image prompt",
-  "image_prompt_4_5": "Cinematic 4:5 vertical mobile image prompt"
+  "main_content": "Full WordPress HTML content here"
 }
 """
 
 NEWSLETTER_PROMPT = """
-You are a senior content strategist for PropertyAcross.com.
-Given the article title and content snippet, produce distribution copy for off-site channels.
+You are a world-class financial newsletter writer for PropertyAcross.com.
+Your writing style sits between The Economist's precision and Morning Brew's readability.
+Investors actually look forward to reading your emails.
+
+Given the article title and full content below, produce distribution copy for all channels.
+
+SUBSTACK / WORDPRESS.COM VARIANT:
+- Open with a punchy 1-sentence hook that makes the reader stop scrolling
+- Write like you're sending a personal note to a smart friend who invests in property
+- Short paragraphs (2-3 sentences max), bold key data points
+- Include a "Why this matters right now" section
+- End with a specific thought-provoking question to drive replies
+- Aim for 350-450 words
+- Tone: insider, warm, direct, genuinely interesting
+
+MEDIUM VARIANT:
+- Write a polished long-form financial essay (500-600 words)
+- Open with a compelling scene or bold statement that reframes how the reader thinks about this market
+- Use [PULL-QUOTE: "..."] tags around your 2-3 strongest data-backed insights
+- Structure: hook → market context → deep analysis → forward outlook → call to action
+- Tone: sophisticated, analytical, written for tech-savvy business readers
+- Make it genuinely worth reading — not just a rewrite of the article
+
+LINKEDIN VARIANT:
+- Open with a single bold line that stops the scroll (no "Excited to share..." ever)
+- Write in tight punchy staccato lines with line breaks between each thought
+- Lead with the most surprising or counterintuitive data point from the article
+- Include a mini data breakdown using → arrows or numbered points
+- Reference specific companies, developers, government bodies, and architects involved
+- Build genuine tension or intrigue — make people want to read the full piece
+- End with one sharp insight or question, then on a new line: "👇 Link to full article analysis in the first comment."
+- Aim for 200-250 words maximum
+- NO generic buzzwords. NO "game-changer". NO "exciting opportunity".
+
+X / TWITTER: Punchy hook-first post under 280 chars with 1-2 hashtags.
+FACEBOOK: Community investor tone, ends with engaging question + hashtags.
+PINTEREST: SEO keyword string.
 
 Output ONLY a valid JSON object — no markdown fences, no preamble:
 {
-  "substack_text": "Conversational inbox-optimised newsletter (short paras, bold takeaways)",
-  "medium_text": "Polished macroeconomic essay with [PULL-QUOTE: ...] tags",
-  "linkedin_copy": "Professional B2B tone. List ALL companies/firms/orgs mentioned. Last line MUST be exactly: 👇 Link to full article analysis in the first comment.",
-  "x_copy": "Punchy hook-first post under 280 chars with 1-2 hashtags",
-  "facebook_copy": "Community investor tone, end with engaging question + hashtags",
-  "pinterest_copy": "SEO keyword string for Pinterest description"
+  "substack_text": "...",
+  "medium_text": "...",
+  "linkedin_copy": "...",
+  "x_copy": "...",
+  "facebook_copy": "...",
+  "pinterest_copy": "..."
 }
 """
 
-WP_IMAGE_BASE = (
-    "Cinematic 16:9 widescreen real estate editorial thumbnail. "
-    "Magazine-style composition, layered cityscape panels, dramatic contrast. "
-    "Bold dark gradient bar across lower third. Large bold headline typography, "
-    "key words in blue and white. Photorealistic, high-resolution, premium investment media look."
-)
-
-INSTAGRAM_IMAGE_BASE = (
-    "Cinematic 4:5 vertical real estate editorial thumbnail for Instagram. "
-    "Magazine-style mobile-optimised composition, layered skyscraper panels. "
-    "Bold dark gradient bar across lower third. Large bold headline typography, "
-    "key words in blue and white. Photorealistic, high-resolution, premium investment media look."
-)
+# ── Streamlit config ──────────────────────────────────────────────
 
 st.set_page_config(
     page_title="PropertyAcross Content Studio",
@@ -74,16 +95,10 @@ st.set_page_config(
     layout="wide"
 )
 
-# ── Custom CSS ────────────────────────────────────────────────────
 st.markdown("""
 <style>
     .block-container { padding-top: 1.5rem; padding-bottom: 1rem; }
     .stTextArea textarea { font-family: 'Courier New', monospace; font-size: 13px; }
-    .stTabs [data-baseweb="tab-list"] { gap: 4px; }
-    .stTabs [data-baseweb="tab"] { padding: 8px 16px; font-size: 13px; }
-    div[data-testid="stStatusWidget"] { display: none; }
-    .stage-done { color: #22c55e; font-weight: 600; }
-    .stage-active { color: #3b82f6; font-weight: 600; }
     .title-banner {
         background: #f0f4ff;
         border-left: 4px solid #1a3c6b;
@@ -106,27 +121,41 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# ── Session state defaults ────────────────────────────────────────
-for key in ["generation_ready", "active_title", "active_content",
-            "dist_data", "raw_img_16_9", "raw_img_4_5",
-            "image_prompt_16_9", "push_success"]:
+for key in ["generation_ready", "push_success", "active_title",
+            "active_content", "dist_data"]:
     if key not in st.session_state:
-        st.session_state[key] = None if key not in ["generation_ready", "push_success"] else False
+        st.session_state[key] = False if key in ["generation_ready", "push_success"] else None
 
 
-# ══════════════════════════════════════════════════════════════════
-# PIPELINE FUNCTIONS
-# ══════════════════════════════════════════════════════════════════
+# ── Pipeline functions ────────────────────────────────────────────
+
+def call_perplexity(messages: list, model: str = "sonar-pro") -> str:
+    response = requests.post(
+        "https://api.perplexity.ai/chat/completions",
+        headers={
+            "Authorization": f"Bearer {PERPLEXITY_API_KEY}",
+            "Content-Type": "application/json"
+        },
+        json={
+            "model": model,
+            "messages": messages,
+            "temperature": 0.7,
+            "max_tokens": 4000,
+        },
+        timeout=120
+    )
+    if response.status_code != 200:
+        raise Exception(f"Perplexity API error ({response.status_code}): {response.text[:300]}")
+    return response.json()["choices"][0]["message"]["content"]
+
 
 def generate_article(raw_input: str) -> dict:
-    client = genai.Client(api_key=GEMINI_API_KEY)
-    prompt = f"{WRITING_PROMPT}\n\nRaw news seed:\n{raw_input}"
-    response = client.models.generate_content(
-        model="gemini-3.1-flash-lite",
-        contents=[prompt],
-        config=types.GenerateContentConfig(response_mime_type="application/json")
-    )
-    text = response.text.strip()
+    messages = [
+        {"role": "system", "content": WRITING_PROMPT},
+        {"role": "user",   "content": f"Raw news seed:\n{raw_input}"}
+    ]
+    text = call_perplexity(messages, model="sonar-pro")
+    text = text.strip()
     s, e = text.find('{'), text.rfind('}')
     if s != -1 and e != -1:
         text = text[s:e+1]
@@ -135,68 +164,19 @@ def generate_article(raw_input: str) -> dict:
 
 
 def generate_distribution(title: str, content: str) -> dict:
-    client = genai.Client(api_key=GEMINI_API_KEY)
-    prompt = (
-        f"{NEWSLETTER_PROMPT}\n\n"
-        f"Article title: {title}\n\n"
-        f"Content snippet:\n{content[:3000]}"
-    )
-    response = client.models.generate_content(
-        model="gemini-3.1-flash-lite",
-        contents=[prompt],
-        config=types.GenerateContentConfig(response_mime_type="application/json")
-    )
-    text = response.text.strip()
+    messages = [
+        {"role": "system", "content": NEWSLETTER_PROMPT},
+        {"role": "user",   "content": f"Article title: {title}\n\nFull article content:\n{content}"}
+    ]
+    text = call_perplexity(messages, model="sonar")
+    text = text.strip()
     s, e = text.find('{'), text.rfind('}')
     if s != -1 and e != -1:
         text = text[s:e+1]
     return json.loads(text)
 
 
-def generate_image(prompt_text: str, aspect_ratio: str = "16:9") -> BytesIO | None:
-    client = genai.Client(api_key=GEMINI_API_KEY)
-    candidates = ["gemini-3.1-flash-image", "gemini-3-pro-image"]
-    for model_name in candidates:
-        try:
-            response = client.models.generate_content(
-                model=model_name,
-                contents=prompt_text,
-                config=types.GenerateContentConfig(
-                    response_modalities=["IMAGE"],
-                    image_config=types.ImageConfig(aspect_ratio=aspect_ratio)
-                )
-            )
-            for part in response.parts:
-                if part.inline_data:
-                    return BytesIO(part.inline_data.data)
-        except Exception as img_err:
-            st.warning(f"Image model {model_name} failed: {img_err}. Trying next...")
-            continue
-    return None
-
-
-def upload_image_to_wp(img_bytes: bytes, filename: str) -> tuple[int | None, str]:
-    url = f"{WP_URL}/media"
-    token = base64.b64encode(f"{WP_USERNAME}:{WP_APP_PASSWORD}".encode()).decode()
-    headers = {
-        "Authorization": f"Basic {token}",
-        "Content-Disposition": f"attachment; filename={filename}",
-        "Content-Type": "image/jpeg"
-    }
-    try:
-        r = requests.post(url, headers=headers, data=img_bytes, timeout=45)
-        if r.status_code == 201:
-            data = r.json()
-            return data.get("id"), data.get("source_url", "")
-        else:
-            st.error(f"Media upload failed ({r.status_code}): {r.text[:300]}")
-    except Exception as e:
-        st.error(f"Media upload error: {e}")
-    return None, ""
-
-
-def push_to_wordpress(title: str, content: str, dist: dict,
-                      featured_id: int | None, insta_url: str) -> bool:
+def push_to_wordpress(title: str, content: str, dist: dict) -> bool:
     url = f"{WP_URL}/posts"
     token = base64.b64encode(f"{WP_USERNAME}:{WP_APP_PASSWORD}".encode()).decode()
     headers = {
@@ -204,18 +184,16 @@ def push_to_wordpress(title: str, content: str, dist: dict,
         "Content-Type": "application/json"
     }
     payload = {
-        "title":          title,
-        "content":        content,
-        "status":         "draft",
-        "featured_media": featured_id or 0,
+        "title":   title,
+        "content": content,
+        "status":  "draft",
         "meta": {
-            "substack_text":    dist.get("substack_text", ""),
-            "medium_text":      dist.get("medium_text", ""),
-            "linkedin_copy":    dist.get("linkedin_copy", ""),
-            "x_copy":           dist.get("x_copy", ""),
-            "facebook_copy":    dist.get("facebook_copy", ""),
-            "pinterest_copy":   dist.get("pinterest_copy", ""),
-            "instagram_asset":  insta_url,
+            "substack_text":  dist.get("substack_text", ""),
+            "medium_text":    dist.get("medium_text", ""),
+            "linkedin_copy":  dist.get("linkedin_copy", ""),
+            "x_copy":         dist.get("x_copy", ""),
+            "facebook_copy":  dist.get("facebook_copy", ""),
+            "pinterest_copy": dist.get("pinterest_copy", ""),
         }
     }
     try:
@@ -229,21 +207,18 @@ def push_to_wordpress(title: str, content: str, dist: dict,
     return False
 
 
-# ══════════════════════════════════════════════════════════════════
-# UI LAYOUT
-# ══════════════════════════════════════════════════════════════════
+# ── UI ────────────────────────────────────────────────────────────
 
 st.title("🏢 PropertyAcross Content Studio")
-st.caption("Transform a raw news seed into a full omnichannel campaign — review everything before it touches WordPress.")
+st.caption("Perplexity-powered research · WordPress push")
 st.markdown("---")
 
 col_left, col_right = st.columns([1, 1.4], gap="large")
 
-# ── LEFT: Input ───────────────────────────────────────────────────
 with col_left:
     st.markdown("#### 📡 News seed")
     seed = st.text_area(
-        label="Paste raw news facts, sentences, or bullet points:",
+        label="seed",
         height=180,
         placeholder=(
             "Example: Fractional real estate platform launched in Athens, "
@@ -259,22 +234,19 @@ with col_left:
 
     st.markdown("---")
     st.markdown("#### ⚙️ Pipeline stages")
-
     s1 = st.empty()
     s2 = st.empty()
-    s3 = st.empty()
-    s4 = st.empty()
 
-    def stage(slot, icon, label, state="pending"):
-        colour = {"pending": "🔘", "active": "🔵", "done": "✅", "error": "❌"}
-        slot.markdown(f"{colour.get(state,'🔘')} **{label}**")
+    def stage(slot, label, state="pending"):
+        icon = {"pending": "🔘", "active": "🔵", "done": "✅", "error": "❌"}
+        slot.markdown(f"{icon.get(state, '🔘')} **{label}**")
 
-    stage(s1, "1", "SEO deep-dive article")
-    stage(s2, "2", "Omnichannel distribution copy")
-    stage(s3, "3", "16:9 cinematic cover image")
-    stage(s4, "4", "4:5 Instagram vertical asset")
+    stage(s1, "Article — Perplexity sonar-pro + web search")
+    stage(s2, "Newsletters & socials — Perplexity sonar")
 
-# ── PIPELINE EXECUTION ────────────────────────────────────────────
+
+# ── Pipeline execution ────────────────────────────────────────────
+
 if run and seed.strip():
     st.session_state.generation_ready = False
     st.session_state.push_success = False
@@ -282,40 +254,21 @@ if run and seed.strip():
     with col_right:
         with st.status("⚙️ Building asset cluster...", expanded=True) as status:
             try:
-                # Stage 1 — Article
-                stage(s1, "1", "SEO deep-dive article", "active")
-                status.update(label="✍️ Stage 1: Generating 1,000+ word SEO article...")
+                stage(s1, "Article — Perplexity sonar-pro + web search", "active")
+                status.update(label="✍️ Stage 1: Researching and writing article via Perplexity...")
                 article = generate_article(seed)
                 st.session_state.active_title   = article.get("title", "Untitled")
                 st.session_state.active_content = article.get("main_content", "")
-                st.session_state.image_prompt_16_9 = article.get("image_prompt_16_9", "")
-                stage(s1, "1", "SEO deep-dive article", "done")
+                stage(s1, "Article — Perplexity sonar-pro + web search", "done")
 
-                # Stage 2 — Distribution
-                stage(s2, "2", "Omnichannel distribution copy", "active")
-                status.update(label="📣 Stage 2: Generating newsletter & social variants...")
+                stage(s2, "Newsletters & socials — Perplexity sonar", "active")
+                status.update(label="📣 Stage 2: Writing newsletters and social copy...")
                 dist = generate_distribution(
                     st.session_state.active_title,
                     st.session_state.active_content
                 )
                 st.session_state.dist_data = dist
-                stage(s2, "2", "Omnichannel distribution copy", "done")
-
-                # Stage 3 — 16:9 image
-                stage(s3, "3", "16:9 cinematic cover image", "active")
-                status.update(label="🎨 Stage 3: Rendering widescreen cover image...")
-                prompt_169 = f"{WP_IMAGE_BASE} Context: {st.session_state.image_prompt_16_9}"
-                img_169 = generate_image(prompt_169, "16:9")
-                st.session_state.raw_img_16_9 = img_169.getvalue() if img_169 else None
-                stage(s3, "3", "16:9 cinematic cover image", "done" if img_169 else "error")
-
-                # Stage 4 — 4:5 image
-                stage(s4, "4", "4:5 Instagram vertical asset", "active")
-                status.update(label="📱 Stage 4: Rendering vertical Instagram asset...")
-                prompt_45 = f"{INSTAGRAM_IMAGE_BASE} Context: {article.get('image_prompt_4_5','')}"
-                img_45 = generate_image(prompt_45, "3:4")
-                st.session_state.raw_img_4_5 = img_45.getvalue() if img_45 else None
-                stage(s4, "4", "4:5 Instagram vertical asset", "done" if img_45 else "error")
+                stage(s2, "Newsletters & socials — Perplexity sonar", "done")
 
                 st.session_state.generation_ready = True
                 status.update(label="✅ All assets ready — review below.", state="complete", expanded=False)
@@ -324,50 +277,30 @@ if run and seed.strip():
                 status.update(label=f"❌ Pipeline error: {err}", state="error")
                 st.error(str(err))
 
-# ── RIGHT: Preview & push ─────────────────────────────────────────
+
+# ── Preview & push ────────────────────────────────────────────────
+
 if st.session_state.generation_ready:
     with col_right:
 
-        # Push-success banner
         if st.session_state.push_success:
             st.markdown(
-                '<div class="push-success">🏆 Draft successfully pushed to WordPress staging!</div>',
+                '<div class="push-success">🏆 Draft successfully pushed to WordPress!</div>',
                 unsafe_allow_html=True
             )
 
-        # Title banner
         st.markdown(
             f'<div class="title-banner">📌 {st.session_state.active_title}</div>',
             unsafe_allow_html=True
         )
 
-        # 16:9 cover image
-        if st.session_state.raw_img_16_9:
-            st.image(st.session_state.raw_img_16_9,
-                     caption="Generated cinematic cover (16:9)",
-                     use_container_width=True)
-
-        # WordPress push button — prominent, gated
-        if st.button("🔌 Push Asset Package to WordPress Drafts",
+        if st.button("🔌 Push to WordPress Drafts",
                      type="secondary", use_container_width=True):
-            with st.spinner("Uploading images and pushing draft to SiteGround..."):
-                featured_id, insta_url = None, ""
-
-                if st.session_state.raw_img_16_9:
-                    featured_id, _ = upload_image_to_wp(
-                        st.session_state.raw_img_16_9, "featured_cover_169.jpg"
-                    )
-                if st.session_state.raw_img_4_5:
-                    _, insta_url = upload_image_to_wp(
-                        st.session_state.raw_img_4_5, "instagram_cover_45.jpg"
-                    )
-
+            with st.spinner("Pushing draft to WordPress..."):
                 success = push_to_wordpress(
                     st.session_state.active_title,
                     st.session_state.active_content,
-                    st.session_state.dist_data,
-                    featured_id,
-                    insta_url
+                    st.session_state.dist_data
                 )
                 if success:
                     st.session_state.push_success = True
@@ -376,9 +309,8 @@ if st.session_state.generation_ready:
 
         st.markdown("---")
 
-        # Content tabs
-        tab_art, tab_nl, tab_soc, tab_img = st.tabs([
-            "📝 Article", "📧 Newsletters", "💼 Socials", "🖼️ Images"
+        tab_art, tab_nl, tab_soc = st.tabs([
+            "📝 Article", "📧 Newsletters", "💼 Socials"
         ])
 
         with tab_art:
@@ -386,13 +318,11 @@ if st.session_state.generation_ready:
 
         with tab_nl:
             dist = st.session_state.dist_data or {}
-            col_a, col_b = st.columns(2)
-            with col_a:
-                st.markdown("**📬 Substack / WordPress.com**")
-                st.code(dist.get("substack_text", ""), language="text")
-            with col_b:
-                st.markdown("**📘 Medium**")
-                st.code(dist.get("medium_text", ""), language="text")
+            st.markdown("**📬 Substack / WordPress.com**")
+            st.code(dist.get("substack_text", ""), language="text")
+            st.markdown("---")
+            st.markdown("**📘 Medium**")
+            st.code(dist.get("medium_text", ""), language="text")
 
         with tab_soc:
             dist = st.session_state.dist_data or {}
@@ -409,32 +339,3 @@ if st.session_state.generation_ready:
             st.markdown("---")
             st.markdown("**📌 Pinterest**")
             st.caption(dist.get("pinterest_copy", ""))
-
-        with tab_img:
-            c1, c2 = st.columns(2)
-            with c1:
-                st.markdown("**16:9 Featured Cover**")
-                if st.session_state.raw_img_16_9:
-                    st.image(st.session_state.raw_img_16_9, use_container_width=True)
-                    st.download_button(
-                        "⬇️ Download 16:9",
-                        data=st.session_state.raw_img_16_9,
-                        file_name="featured_cover.jpg",
-                        mime="image/jpeg",
-                        use_container_width=True
-                    )
-                else:
-                    st.warning("Image generation failed or unavailable.")
-            with c2:
-                st.markdown("**4:5 Instagram / Stories**")
-                if st.session_state.raw_img_4_5:
-                    st.image(st.session_state.raw_img_4_5, use_container_width=True)
-                    st.download_button(
-                        "⬇️ Download 4:5",
-                        data=st.session_state.raw_img_4_5,
-                        file_name="instagram_cover.jpg",
-                        mime="image/jpeg",
-                        use_container_width=True
-                    )
-                else:
-                    st.warning("Image generation failed or unavailable.")
