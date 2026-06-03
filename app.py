@@ -159,26 +159,40 @@ def strip_citations(text: str) -> str:
 
 
 def call_perplexity(messages: list, model: str = "sonar-pro") -> str:
-    # Prepend a hard system-level JSON enforcement message
+    if not PERPLEXITY_API_KEY:
+        raise Exception("PERPLEXITY_API_KEY is missing from secrets.")
     enforced_messages = messages.copy()
     enforced_messages[0]["content"] = enforced_messages[0]["content"] + "\n\nABSOLUTE RULE: Your entire response must be a single valid JSON object. No text before it. No text after it. No explanations. No markdown. Start with { and end with }."
-    response = requests.post(
-        "https://api.perplexity.ai/chat/completions",
-        headers={
-            "Authorization": f"Bearer {PERPLEXITY_API_KEY}",
-            "Content-Type": "application/json"
-        },
-        json={
-            "model": model,
-            "messages": enforced_messages,
-            "temperature": 0.2,
-            "max_tokens": 4000,
-        },
-        timeout=120
-    )
+    try:
+        response = requests.post(
+            "https://api.perplexity.ai/chat/completions",
+            headers={
+                "Authorization": f"Bearer {PERPLEXITY_API_KEY}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": model,
+                "messages": enforced_messages,
+                "temperature": 0.2,
+                "max_tokens": 4000,
+            },
+            timeout=120
+        )
+    except requests.exceptions.Timeout:
+        raise Exception("Perplexity API timed out after 120 seconds. Try again.")
+    except requests.exceptions.ConnectionError:
+        raise Exception("Could not connect to Perplexity API. Check network.")
+
+    st.info(f"DEBUG — HTTP status: {response.status_code} | First 300 chars: {response.text[:300]}")
+
     if response.status_code != 200:
         raise Exception(f"Perplexity API error ({response.status_code}): {response.text[:300]}")
-    return response.json()["choices"][0]["message"]["content"]
+
+    data = response.json()
+    if "choices" not in data or not data["choices"]:
+        raise Exception(f"Unexpected Perplexity response structure: {str(data)[:300]}")
+
+    return data["choices"][0]["message"]["content"]
 
 
 def safe_parse_json(text: str) -> dict:
