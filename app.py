@@ -235,6 +235,7 @@ def generate_article(raw_input: str) -> dict:
         {"role": "user",   "content": f"Raw news seed:\n{raw_input}"}
     ]
     text = call_perplexity(messages, model="sonar-pro")
+    st.info(f"DEBUG — Raw Perplexity response (first 800 chars):\n{text[:800]}")
     result = safe_parse_json(text)
     if isinstance(result, list):
         result = result[0]
