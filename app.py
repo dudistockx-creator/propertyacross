@@ -159,40 +159,23 @@ def strip_citations(text: str) -> str:
 
 
 def call_perplexity(messages: list, model: str = "sonar-pro") -> str:
-    if not PERPLEXITY_API_KEY:
-        raise Exception("PERPLEXITY_API_KEY is missing from secrets.")
-    enforced_messages = messages.copy()
-    enforced_messages[0]["content"] = enforced_messages[0]["content"] + "\n\nABSOLUTE RULE: Your entire response must be a single valid JSON object. No text before it. No text after it. No explanations. No markdown. Start with { and end with }."
-    try:
-        response = requests.post(
-            "https://api.perplexity.ai/chat/completions",
-            headers={
-                "Authorization": f"Bearer {PERPLEXITY_API_KEY}",
-                "Content-Type": "application/json"
-            },
-            json={
-                "model": model,
-                "messages": enforced_messages,
-                "temperature": 0.2,
-                "max_tokens": 4000,
-            },
-            timeout=120
-        )
-    except requests.exceptions.Timeout:
-        raise Exception("Perplexity API timed out after 120 seconds. Try again.")
-    except requests.exceptions.ConnectionError:
-        raise Exception("Could not connect to Perplexity API. Check network.")
-
-    st.info(f"DEBUG — HTTP status: {response.status_code} | First 300 chars: {response.text[:300]}")
-
+    response = requests.post(
+        "https://api.perplexity.ai/chat/completions",
+        headers={
+            "Authorization": f"Bearer {PERPLEXITY_API_KEY}",
+            "Content-Type": "application/json"
+        },
+        json={
+            "model": model,
+            "messages": messages,
+            "temperature": 0.7,
+            "max_tokens": 4000,
+        },
+        timeout=120
+    )
     if response.status_code != 200:
         raise Exception(f"Perplexity API error ({response.status_code}): {response.text[:300]}")
-
-    data = response.json()
-    if "choices" not in data or not data["choices"]:
-        raise Exception(f"Unexpected Perplexity response structure: {str(data)[:300]}")
-
-    return data["choices"][0]["message"]["content"]
+    return response.json()["choices"][0]["message"]["content"]
 
 
 def safe_parse_json(text: str) -> dict:
@@ -215,15 +198,8 @@ def safe_parse_json(text: str) -> dict:
     except json.JSONDecodeError:
         pass
 
-    # Second attempt: try to fix common issues and parse again
-    try:
-        # Replace smart quotes with regular quotes
-        fixed = text.replace('“', '"').replace('”', '"').replace('‘', "'").replace('’', "'")
-        return json.loads(fixed)
-    except json.JSONDecodeError:
-        pass
-
-    # Third attempt: use regex to extract each key-value pair individually
+    # Second attempt: use regex to extract each key-value pair individually
+    # This handles cases where Perplexity puts raw HTML or unescaped text in values
     result = {}
     pattern = re.compile(
         r'"(\w+)"\s*:\s*"((?:[^"\\]|\\.)*)"',
@@ -232,15 +208,14 @@ def safe_parse_json(text: str) -> dict:
     for match in pattern.finditer(text):
         key = match.group(1)
         value = match.group(2)
+        # Unescape standard JSON escapes
         value = value.replace('\\"', '"').replace('\\n', '\n').replace('\\t', '\t')
         result[key] = value
 
     if result:
         return result
 
-    # Last resort: show raw response in Streamlit for debugging
-    st.error(f"Raw Perplexity response (first 500 chars):\n{text[:500]}")
-    raise ValueError(f"Could not parse JSON from response.")
+    raise ValueError(f"Could not parse JSON from response. Raw text snippet: {text[:300]}")
 
 
 def generate_article(raw_input: str) -> dict:
@@ -249,7 +224,6 @@ def generate_article(raw_input: str) -> dict:
         {"role": "user",   "content": f"Raw news seed:\n{raw_input}"}
     ]
     text = call_perplexity(messages, model="sonar-pro")
-    st.info(f"DEBUG — Raw Perplexity response (first 800 chars):\n{text[:800]}")
     result = safe_parse_json(text)
     if isinstance(result, list):
         result = result[0]
