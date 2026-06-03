@@ -159,6 +159,9 @@ def strip_citations(text: str) -> str:
 
 
 def call_perplexity(messages: list, model: str = "sonar-pro") -> str:
+    # Prepend a hard system-level JSON enforcement message
+    enforced_messages = messages.copy()
+    enforced_messages[0]["content"] = enforced_messages[0]["content"] + "\n\nABSOLUTE RULE: Your entire response must be a single valid JSON object. No text before it. No text after it. No explanations. No markdown. Start with { and end with }."
     response = requests.post(
         "https://api.perplexity.ai/chat/completions",
         headers={
@@ -167,8 +170,8 @@ def call_perplexity(messages: list, model: str = "sonar-pro") -> str:
         },
         json={
             "model": model,
-            "messages": messages,
-            "temperature": 0.7,
+            "messages": enforced_messages,
+            "temperature": 0.2,
             "max_tokens": 4000,
         },
         timeout=120
@@ -198,8 +201,15 @@ def safe_parse_json(text: str) -> dict:
     except json.JSONDecodeError:
         pass
 
-    # Second attempt: use regex to extract each key-value pair individually
-    # This handles cases where Perplexity puts raw HTML or unescaped text in values
+    # Second attempt: try to fix common issues and parse again
+    try:
+        # Replace smart quotes with regular quotes
+        fixed = text.replace('“', '"').replace('”', '"').replace('‘', "'").replace('’', "'")
+        return json.loads(fixed)
+    except json.JSONDecodeError:
+        pass
+
+    # Third attempt: use regex to extract each key-value pair individually
     result = {}
     pattern = re.compile(
         r'"(\w+)"\s*:\s*"((?:[^"\\]|\\.)*)"',
@@ -208,14 +218,15 @@ def safe_parse_json(text: str) -> dict:
     for match in pattern.finditer(text):
         key = match.group(1)
         value = match.group(2)
-        # Unescape standard JSON escapes
         value = value.replace('\\"', '"').replace('\\n', '\n').replace('\\t', '\t')
         result[key] = value
 
     if result:
         return result
 
-    raise ValueError(f"Could not parse JSON from response. Raw text snippet: {text[:300]}")
+    # Last resort: show raw response in Streamlit for debugging
+    st.error(f"Raw Perplexity response (first 500 chars):\n{text[:500]}")
+    raise ValueError(f"Could not parse JSON from response.")
 
 
 def generate_article(raw_input: str) -> dict:
