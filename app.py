@@ -159,23 +159,38 @@ def strip_citations(text: str) -> str:
 
 
 def call_perplexity(messages: list, model: str = "sonar-pro") -> str:
-    response = requests.post(
-        "https://api.perplexity.ai/chat/completions",
-        headers={
-            "Authorization": f"Bearer {PERPLEXITY_API_KEY}",
-            "Content-Type": "application/json"
-        },
-        json={
-            "model": model,
-            "messages": messages,
-            "temperature": 0.7,
-            "max_tokens": 4000,
-        },
-        timeout=120
-    )
+    if not PERPLEXITY_API_KEY:
+        raise Exception("PERPLEXITY_API_KEY is missing from secrets.")
+    enforced_messages = messages.copy()
+    enforced_messages[0]["content"] = enforced_messages[0]["content"] + "\n\nABSOLUTE RULE: Your entire response must be a single valid JSON object. No text before it. No text after it. No explanations. No markdown. Start with { and end with }."
+    try:
+        response = requests.post(
+            "https://api.perplexity.ai/chat/completions",
+            headers={
+                "Authorization": f"Bearer {PERPLEXITY_API_KEY}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": model,
+                "messages": enforced_messages,
+                "temperature": 0.2,
+                "max_tokens": 8000,
+            },
+            timeout=120
+        )
+    except requests.exceptions.Timeout:
+        raise Exception("Perplexity API timed out after 120 seconds. Try again.")
+    except requests.exceptions.ConnectionError:
+        raise Exception("Could not connect to Perplexity API. Check network.")
+
     if response.status_code != 200:
         raise Exception(f"Perplexity API error ({response.status_code}): {response.text[:300]}")
-    return response.json()["choices"][0]["message"]["content"]
+
+    data = response.json()
+    if "choices" not in data or not data["choices"]:
+        raise Exception(f"Unexpected Perplexity response structure: {str(data)[:300]}")
+
+    return data["choices"][0]["message"]["content"]
 
 
 def safe_parse_json(text: str) -> dict:
@@ -198,8 +213,15 @@ def safe_parse_json(text: str) -> dict:
     except json.JSONDecodeError:
         pass
 
-    # Second attempt: use regex to extract each key-value pair individually
-    # This handles cases where Perplexity puts raw HTML or unescaped text in values
+    # Second attempt: try to fix common issues and parse again
+    try:
+        # Replace smart quotes with regular quotes
+        fixed = text.replace('“', '"').replace('”', '"').replace('‘', "'").replace('’', "'")
+        return json.loads(fixed)
+    except json.JSONDecodeError:
+        pass
+
+    # Third attempt: use regex to extract each key-value pair individually
     result = {}
     pattern = re.compile(
         r'"(\w+)"\s*:\s*"((?:[^"\\]|\\.)*)"',
@@ -208,30 +230,55 @@ def safe_parse_json(text: str) -> dict:
     for match in pattern.finditer(text):
         key = match.group(1)
         value = match.group(2)
-        # Unescape standard JSON escapes
         value = value.replace('\\"', '"').replace('\\n', '\n').replace('\\t', '\t')
         result[key] = value
 
     if result:
         return result
 
-    raise ValueError(f"Could not parse JSON from response. Raw text snippet: {text[:300]}")
+    # Last resort: show raw response in Streamlit for debugging
+    st.error(f"Raw Perplexity response (first 500 chars):\n{text[:500]}")
+    raise ValueError(f"Could not parse JSON from response.")
 
 
 def generate_article(raw_input: str) -> dict:
-    messages = [
-        {"role": "system", "content": WRITING_PROMPT},
-        {"role": "user",   "content": f"Raw news seed:\n{raw_input}"}
+    # Step 1: Generate title only (small, fast)
+    title_messages = [
+        {"role": "system", "content": (
+            "You are an SEO expert for PropertyAcross.com. "
+            "Given the news seed, return ONLY a single valid JSON object with one key: title. "
+            "The title must be a bold question-based H1 headline targeting real estate investors in 2026. "
+            "Example: {\"title\": \"Will Athens Fractional Studios Deliver 6% Yields for Golden Visa Buyers in 2026?\"} "
+            "ABSOLUTE RULE: Return only the JSON object. Nothing else."
+        )},
+        {"role": "user", "content": f"News seed:\n{raw_input}"}
     ]
-    text = call_perplexity(messages, model="sonar-pro")
-    result = safe_parse_json(text)
-    if isinstance(result, list):
-        result = result[0]
-    if "main_content" in result:
-        result["main_content"] = strip_citations(result["main_content"])
-    if "title" in result:
-        result["title"] = strip_citations(result["title"])
-    return result
+    title_text = call_perplexity(title_messages, model="sonar")
+    title_result = safe_parse_json(title_text)
+    title = strip_citations(title_result.get("title", "Untitled"))
+
+    # Step 2: Generate article body as plain HTML (no JSON wrapper, uses full token budget)
+    body_messages = [
+        {"role": "system", "content": (
+            "You are the Lead SEO Architect for PropertyAcross.com. "
+            "Using live web search, write a 1,200+ word evidence-based real estate investment article in clean WordPress HTML. "
+            "Rules: "
+            "1. Use question-based H2/H3 subheadings focused on investor concerns. "
+            "2. Under each heading write 2-4 short paragraphs with hard statistics, yield figures, and price points. "
+            "3. Every claim must be backed by a concrete number or data point. "
+            "4. End with an FAQ block of 5-7 high-volume Q&As. "
+            "5. Use only these HTML tags: h2, h3, p, strong, ul, li. Do NOT use h1. "
+            "6. Output ONLY the raw HTML. No JSON. No markdown. No preamble. No citation markers like [1][2]."
+        )},
+        {"role": "user", "content": f"Article title: {title}\n\nNews seed: {raw_input}"}
+    ]
+    body_text = call_perplexity(body_messages, model="sonar-pro")
+    main_content = strip_citations(body_text.strip())
+
+    # Wrap with H1
+    main_content = f"<h1>{title}</h1>\n" + main_content
+
+    return {"title": title, "main_content": main_content}
 
 
 def generate_distribution(title: str, content: str) -> dict:
