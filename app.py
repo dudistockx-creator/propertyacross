@@ -72,38 +72,37 @@ LINKEDIN VARIANT:
 - Build genuine tension or intrigue — make people want to read the full piece
 - End with one sharp insight or question, then on a new line: "👇 Link to full article analysis in the first comment."
 - Aim for 200-250 words maximum
-- CRITICAL FORMATTING: Do NOT use asterisks (*) for bold. Do NOT use dashes (-) as bullet points. Use plain text only with line breaks and → arrows.
+- CRITICAL FORMATTING: Do NOT use asterisks (*) for bold. Do NOT use dashes (-) as bullet points. Plain text and → arrows only.
 - NO generic buzzwords. NO "game-changer". NO "exciting opportunity".
 
 FACEBOOK VARIANT:
 - Community investor tone, warm and approachable
-- Short paragraphs, no bullet points
+- Short paragraphs, no bullet points, no asterisks, no dashes
 - End with an engaging question to drive comments
-- Include a block of relevant hashtags at the bottom
-- CRITICAL FORMATTING: Do NOT use asterisks (*). Do NOT use dashes (-) as bullet points. Plain text with line breaks only.
+- Include relevant hashtags at the bottom
 
 X / TWITTER: Punchy hook-first post under 280 chars with 1-2 hashtags. No asterisks. No dashes.
 
 INSTAGRAM VARIANT:
 - Hook first line that stops the scroll
-- 5-8 short punchy lines, each on its own line
+- 5-8 short punchy lines each on its own line
 - Visual and aspirational tone — paint a picture of the investment opportunity
-- End with a call to action: "Link in bio for the full analysis."
-- Include 10-15 highly relevant hashtags on a separate line at the bottom
-- No asterisks. No dashes as bullets. Use emojis sparingly for visual breaks.
+- End with: "Link in bio for the full analysis."
+- Include 10-15 relevant hashtags on a separate line at the bottom
+- No asterisks. No dashes. Emojis sparingly for visual breaks only.
 
 PINTEREST VARIANT:
-- SEO-optimised description of 2-3 sentences
+- 2-3 sentence SEO-optimised description
 - Include the key yield figure, location, and investment type
 - End with a call to action
 - No asterisks. No dashes.
 
 INSTAGRAM IMAGE PROMPT:
-- Write a detailed prompt for generating a cinematic 4:5 vertical Instagram cover image
+- Write a detailed cinematic 4:5 vertical Instagram cover image generation prompt
 - Magazine-style real estate editorial composition
 - Layered cityscape or property panels, dramatic contrast
 - Bold dark gradient bar across lower third
-- Large bold headline typography in the foreground, key words in blue and white
+- Large bold headline typography in foreground, key words in blue and white
 - Photorealistic, high-resolution, premium investment media look
 - Include the specific location and property type from the article
 
@@ -174,8 +173,8 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 for key in ["generation_ready", "push_success", "active_title",
-            "active_content", "dist_data", "seo_data", "instagram_copy",
-            "instagram_image_prompt"]:
+            "active_content", "dist_data", "seo_data",
+            "instagram_copy", "instagram_image_prompt"]:
     if key not in st.session_state:
         st.session_state[key] = False if key in ["generation_ready", "push_success"] else None
 
@@ -192,8 +191,8 @@ def strip_citations(text: str) -> str:
 
 def strip_formatting(text: str) -> str:
     """Remove asterisks and dash bullets from social copy."""
-    text = re.sub(r'\*+', '', text)
-    text = re.sub(r'(?m)^\s*-\s+', '', text)
+    text = re.sub(r'[*]+', '', text)
+    text = re.sub(r'(?m)^\s*[-]\s+', '', text)
     return text.strip()
 
 
@@ -299,15 +298,39 @@ def generate_article(raw_input: str) -> dict:
     # Step 2: Generate article body as plain HTML (no JSON wrapper, uses full token budget)
     body_messages = [
         {"role": "system", "content": (
-            "You are the Lead SEO Architect for PropertyAcross.com. "
-            "Using live web search, write a 1,200+ word evidence-based real estate investment article in clean WordPress HTML. "
-            "Rules: "
-            "1. Use question-based H2/H3 subheadings focused on investor concerns. "
-            "2. Under each heading write 2-4 short paragraphs with hard statistics, yield figures, and price points. "
-            "3. Every claim must be backed by a concrete number or data point. "
-            "4. End with an FAQ block of 5-7 high-volume Q&As. "
-            "5. Use only these HTML tags: h2, h3, p, strong, ul, li. Do NOT use h1. "
-            "6. Output ONLY the raw HTML. No JSON. No markdown. No preamble. No citation markers like [1][2]."
+            "You are the Lead SEO Architect for PropertyAcross.com, writing for serious real estate investors. "
+            "Use live web search to enrich the article with current statistics, yield figures, and price data. "
+            "Follow these professional SEO content rules used by Ahrefs, HubSpot, and top-ranking investment publications:\n\n"
+
+            "STRUCTURE:\n"
+            "1. Opening intro paragraph (50-80 words): Answer the core investor question immediately in 2-3 sentences. "
+            "State the key data point or finding upfront. Use the inverted pyramid — most important fact first.\n"
+            "2. Key Takeaways box: Add a <ul> with 3-4 bullet points summarising the most important data points investors need to know. "
+            "Label it with <strong>Key Takeaways</strong> before the list.\n"
+            "3. Question-based H2/H3 subheadings: Each heading must be a specific investor question "
+            "(e.g. 'What rental yields can investors realistically expect in 2026?').\n"
+            "4. Under each H2/H3: Write exactly 2-3 paragraphs. Each paragraph must be 80-120 words maximum. "
+            "Each sentence must be 15-20 words maximum. Active voice only. No passive constructions.\n"
+            "5. Every factual claim must name its source inline using natural attribution "
+            "(e.g. 'according to Knight Frank', 'JLL data shows', 'the Ministry of Migration confirmed'). "
+            "No numbered citation markers like [1] or [2].\n"
+            "6. Add transition sentences between sections to maintain reading flow.\n"
+            "7. FAQ block at the end: 5-7 questions. Each answer must be 40-60 words — tight, direct, snippet-optimised. "
+            "Write FAQ answers as if they will appear as Google featured snippets.\n"
+            "8. Closing CTA paragraph (40-60 words): Summarise the investment case and direct readers to explore more on PropertyAcross.com.\n\n"
+
+            "TONE & LANGUAGE:\n"
+            "- Write like a senior analyst at a premium investment bank, not a real estate agent.\n"
+            "- Use active voice: 'Investors earn 6.2%' not 'A yield of 6.2% is earned by investors'.\n"
+            "- No filler phrases: never use 'it is worth noting', 'it is important to', 'in conclusion', 'in today\'s market'.\n"
+            "- No fluff adjectives: never use 'booming', 'thriving', 'exciting', 'incredible', 'remarkable'.\n"
+            "- Replace vague claims with numbers: never say 'strong yields' — say '6.4% gross yield'.\n"
+            "- Vary sentence length: mix short punchy sentences (8-10 words) with longer analytical ones (18-22 words).\n\n"
+
+            "FORMATTING RULES:\n"
+            "- Use only these HTML tags: h2, h3, p, strong, ul, li. Do NOT use h1.\n"
+            "- No inline styles. No div tags. No tables.\n"
+            "- Output ONLY the raw HTML body. No JSON. No markdown fences. No preamble. No citation markers like [1][2]."
         )},
         {"role": "user", "content": f"Article title: {title}\n\nNews seed: {raw_input}"}
     ]
@@ -379,9 +402,7 @@ def push_to_wordpress(title: str, content: str, dist: dict, seo: dict) -> bool:
             "linkedin_copy":        dist.get("linkedin_copy", ""),
             "x_copy":               dist.get("x_copy", ""),
             "facebook_copy":        dist.get("facebook_copy", ""),
-            "instagram_copy":       dist.get("instagram_copy", ""),
             "pinterest_copy":       dist.get("pinterest_copy", ""),
-            "instagram_image_prompt": dist.get("instagram_image_prompt", ""),
             "_yoast_wpseo_title":   seo.get("seo_title", ""),
             "_yoast_wpseo_metadesc":seo.get("seo_description", ""),
             "rank_math_focus_keyword": seo.get("seo_tags", ""),
