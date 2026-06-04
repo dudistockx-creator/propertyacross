@@ -125,7 +125,7 @@ You are an expert SEO specialist for PropertyAcross.com.
 Given the article title and content below, generate three SEO fields.
 
 RULES:
-- seo_title: Maximum 60 characters. Compelling, keyword-rich, includes the primary location and asset type. No clickbait.
+- seo_title: Maximum 60 characters. Write like a top Ahrefs/Backlinko headline — front-load the most valuable keyword or number, make it impossible not to click, speak directly to the investor's self-interest. NEVER start with Will, Is, Are, Can, Should, What, How, Does. NEVER use: Guide, Overview, Everything You Need, Ultimate, Comprehensive. USE: specific numbers/yields, city+asset type, power words like Hits, Beats, Reveals, Unlocks, Surges, Outpaces, Closes, Targets. Examples of strong style: "Dubai Offices Hit 9.1% — 3x the Residential Yield", "Lisbon Fractional Closes at 7.2% Before Q3", "Bangkok Condos Outpace London BTL for First Time".
 - seo_description: Maximum 155 characters. One punchy sentence summarising the investment opportunity and key data point. Must make someone want to click.
 - seo_tags: 8-12 comma-separated keyword tags. Mix of broad terms (e.g. real estate investment 2026) and specific micro-topic terms (e.g. Park City commercial property yield). No hashtags, no quotes around individual tags.
 
@@ -135,6 +135,31 @@ CRITICAL: Do NOT escape quotes or characters inside JSON string values. Write na
   "seo_title": "Max 60 char SEO title here",
   "seo_description": "Max 155 char meta description here",
   "seo_tags": "tag one, tag two, tag three, tag four"
+}
+"""
+
+FEATURED_IMAGE_PROMPT = """
+You are a creative director for PropertyAcross.com producing AI image generation prompts.
+Given the article title and key content details below, write ONE featured image prompt.
+
+The prompt must describe a cinematic vertical editorial thumbnail in the style of a high-end real estate feature.
+Use a polished magazine-style composition with layered cityscape panels, dramatic contrast, and strong urban energy.
+Add a bold dark gradient bar across the lower portion of the image for text readability.
+In the foreground, place large, powerful headline text — bold, clean, modern, and highly legible,
+with the most important words emphasized in blue and white.
+Photorealistic, high-resolution, editorial magazine style, crisp architecture details,
+premium investment media look. Format: 16:9.
+
+The prompt must be specific to the article:
+- Name the exact city, country, and building/asset type from the article
+- Reference the architectural style, skyline, or landmark if relevant
+- Include the investment angle visually (e.g. yield percentage as overlay text, currency symbol, investor silhouette)
+- Specify time of day, lighting mood, and atmosphere that fits the market story
+- Keep it under 120 words — tight, vivid, directive
+
+Output ONLY a valid JSON object:
+{
+  "featured_image_prompt": "Full detailed image generation prompt here"
 }
 """
 
@@ -174,7 +199,8 @@ st.markdown("""
 
 for key in ["generation_ready", "push_success", "active_title",
             "active_content", "dist_data", "seo_data",
-            "instagram_copy", "instagram_image_prompt"]:
+            "instagram_copy", "instagram_image_prompt",
+            "featured_image_prompt"]:
     if key not in st.session_state:
         st.session_state[key] = False if key in ["generation_ready", "push_success"] else None
 
@@ -283,11 +309,25 @@ def generate_article(raw_input: str) -> dict:
     # Step 1: Generate title only (small, fast)
     title_messages = [
         {"role": "system", "content": (
-            "You are an SEO expert for PropertyAcross.com. "
-            "Given the news seed, return ONLY a single valid JSON object with one key: title. "
-            "The title must be a bold question-based H1 headline targeting real estate investors in 2026. "
-            "Example: {\"title\": \"Will Athens Fractional Studios Deliver 6% Yields for Golden Visa Buyers in 2026?\"} "
-            "ABSOLUTE RULE: Return only the JSON object. Nothing else."
+            "You are a senior headline writer for a premium real estate investment publication. "
+            "Given the news seed, return ONLY a JSON object: {\"title\": \"...\"}. "
+            "\n\nHEADLINE RULES: "
+            "\n- Maximum 70 characters "
+            "\n- Lead with the most surprising number, location, or contrarian angle "
+            "\n- Use varied structures: statements, how-to, comparisons, data-led, contrarian, insider angles "
+            "\n- NEVER start with Will, Is, Are, Can, Should, Does, Do, Has, Have, or What "
+            "\n- NEVER use: game-changer, booming, thriving, exciting, incredible, comprehensive guide "
+            "\n- Include city/country + asset type naturally "
+            "\n- Include a specific number, yield, price, or % where possible "
+            "\n\nSTRONG PATTERNS — rotate through these, never repeat the same structure twice: "
+            "\n- Data statement: Dubai Marina Offices Hit 9.1% Yield — Beating Residential by 3x "
+            "\n- Contrarian: Why Bangkok Condos Outperform London Buy-to-Let in 2026 "
+            "\n- Insider angle: The Georgian CBI Loophole Attracting $2B in European Capital "
+            "\n- How-to: How Lisbon Fractional Investors Lock In 7% Before Q3 Closings "
+            "\n- Comparison: Athens vs Nicosia — Where 250K Buys the Better Residency Yield "
+            "\n- Trend reveal: Vietnam Industrial REITs Just Outpaced Singapore for the First Time "
+            "\n- Urgency/stakes: Morocco CBI Window Closes in 90 Days — The Investment Case "
+            "\nABSOLUTE RULE: Return only the JSON object. Nothing else."
         )},
         {"role": "user", "content": f"News seed:\n{raw_input}"}
     ]
@@ -382,6 +422,18 @@ def generate_seo(title: str, content: str) -> dict:
     }
 
 
+def generate_featured_image_prompt(title: str, content: str) -> str:
+    messages = [
+        {"role": "system", "content": FEATURED_IMAGE_PROMPT},
+        {"role": "user",   "content": f"Article title: {title}\n\nArticle content (first 2000 chars):\n{content[:2000]}"}
+    ]
+    text = call_perplexity(messages, model="sonar")
+    result = safe_parse_json(text)
+    if isinstance(result, list):
+        result = result[0]
+    return strip_citations(result.get("featured_image_prompt", ""))
+
+
 def push_to_wordpress(title: str, content: str, dist: dict, seo: dict) -> bool:
     url = f"{WP_URL}/posts"
     token = base64.b64encode(f"{WP_USERNAME}:{WP_APP_PASSWORD}".encode()).decode()
@@ -407,6 +459,7 @@ def push_to_wordpress(title: str, content: str, dist: dict, seo: dict) -> bool:
             "_yoast_wpseo_metadesc":seo.get("seo_description", ""),
             "rank_math_focus_keyword": seo.get("seo_tags", ""),
             "_yoast_wpseo_focuskw": seo.get("seo_tags", "").split(",")[0].strip() if seo.get("seo_tags") else "",
+            "featured_image_prompt": st.session_state.get("featured_image_prompt", ""),
         }
     }
     try:
@@ -450,6 +503,7 @@ with col_left:
     s1 = st.empty()
     s2 = st.empty()
     s3 = st.empty()
+    s4 = st.empty()
 
     def stage(slot, label, state="pending"):
         icon = {"pending": "🔘", "active": "🔵", "done": "✅", "error": "❌"}
@@ -458,6 +512,7 @@ with col_left:
     stage(s1, "Article — Perplexity sonar-pro + web search")
     stage(s2, "Newsletters & socials — Perplexity sonar")
     stage(s3, "SEO title, description & tags — Perplexity sonar")
+    stage(s4, "Featured image prompt — Perplexity sonar")
 
 
 # ── Pipeline execution ────────────────────────────────────────────
@@ -493,6 +548,15 @@ if run and seed.strip():
                 )
                 st.session_state.seo_data = seo
                 stage(s3, "SEO title, description & tags — Perplexity sonar", "done")
+
+                stage(s4, "Featured image prompt — Perplexity sonar", "active")
+                status.update(label="🖼️ Stage 4: Generating featured image prompt...")
+                featured_img = generate_featured_image_prompt(
+                    st.session_state.active_title,
+                    st.session_state.active_content
+                )
+                st.session_state.featured_image_prompt = featured_img
+                stage(s4, "Featured image prompt — Perplexity sonar", "done")
 
                 st.session_state.generation_ready = True
                 status.update(label="✅ All assets ready — review below.", state="complete", expanded=False)
@@ -534,8 +598,8 @@ if st.session_state.generation_ready:
 
         st.markdown("---")
 
-        tab_art, tab_nl, tab_soc, tab_seo = st.tabs([
-            "📝 Article", "📧 Newsletters", "💼 Socials", "🔍 SEO"
+        tab_art, tab_nl, tab_soc, tab_seo, tab_img = st.tabs([
+            "📝 Article", "📧 Newsletters", "💼 Socials", "🔍 SEO", "🖼️ Featured Image"
         ])
 
         with tab_art:
@@ -595,3 +659,20 @@ if st.session_state.generation_ready:
             st.code(seo_tags, language="text")
             tag_list = [t.strip() for t in seo_tags.split(",") if t.strip()]
             st.markdown(f"*{len(tag_list)} tags generated*")
+
+        with tab_img:
+            st.markdown("**🖼️ Featured Image Prompt (16:9)**")
+            st.caption("Copy this into Midjourney, DALL·E, Firefly, or any image generator.")
+            img_prompt = st.session_state.get("featured_image_prompt", "")
+            st.code(img_prompt, language="text")
+            if img_prompt:
+                char_count_img = len(img_prompt)
+                st.markdown(f"*{char_count_img} characters*")
+                # One-click copy helper
+                st.text_area(
+                    "✏️ Edit before copying",
+                    value=img_prompt,
+                    height=160,
+                    key="img_prompt_edit",
+                    label_visibility="visible"
+                )
