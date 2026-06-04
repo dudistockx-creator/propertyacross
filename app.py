@@ -67,16 +67,45 @@ LINKEDIN VARIANT:
 - Open with a single bold line that stops the scroll (no "Excited to share..." ever)
 - Write in tight punchy staccato lines with line breaks between each thought
 - Lead with the most surprising or counterintuitive data point from the article
-- Include a mini data breakdown using → arrows or numbered points
+- Include a mini data breakdown using plain numbers and → arrows only
 - Reference specific companies, developers, government bodies, and architects involved
 - Build genuine tension or intrigue — make people want to read the full piece
 - End with one sharp insight or question, then on a new line: "👇 Link to full article analysis in the first comment."
 - Aim for 200-250 words maximum
+- CRITICAL FORMATTING: Do NOT use asterisks (*) for bold. Do NOT use dashes (-) as bullet points. Use plain text only with line breaks and → arrows.
 - NO generic buzzwords. NO "game-changer". NO "exciting opportunity".
 
-X / TWITTER: Punchy hook-first post under 280 chars with 1-2 hashtags.
-FACEBOOK: Community investor tone, ends with engaging question + hashtags.
-PINTEREST: SEO keyword string.
+FACEBOOK VARIANT:
+- Community investor tone, warm and approachable
+- Short paragraphs, no bullet points
+- End with an engaging question to drive comments
+- Include a block of relevant hashtags at the bottom
+- CRITICAL FORMATTING: Do NOT use asterisks (*). Do NOT use dashes (-) as bullet points. Plain text with line breaks only.
+
+X / TWITTER: Punchy hook-first post under 280 chars with 1-2 hashtags. No asterisks. No dashes.
+
+INSTAGRAM VARIANT:
+- Hook first line that stops the scroll
+- 5-8 short punchy lines, each on its own line
+- Visual and aspirational tone — paint a picture of the investment opportunity
+- End with a call to action: "Link in bio for the full analysis."
+- Include 10-15 highly relevant hashtags on a separate line at the bottom
+- No asterisks. No dashes as bullets. Use emojis sparingly for visual breaks.
+
+PINTEREST VARIANT:
+- SEO-optimised description of 2-3 sentences
+- Include the key yield figure, location, and investment type
+- End with a call to action
+- No asterisks. No dashes.
+
+INSTAGRAM IMAGE PROMPT:
+- Write a detailed prompt for generating a cinematic 4:5 vertical Instagram cover image
+- Magazine-style real estate editorial composition
+- Layered cityscape or property panels, dramatic contrast
+- Bold dark gradient bar across lower third
+- Large bold headline typography in the foreground, key words in blue and white
+- Photorealistic, high-resolution, premium investment media look
+- Include the specific location and property type from the article
 
 Output ONLY a valid JSON object — no markdown fences, no preamble, no citation markers.
 CRITICAL: Do NOT escape quotes or characters inside JSON string values. Write natural text. Output clean JSON only.
@@ -86,7 +115,9 @@ CRITICAL: Do NOT escape quotes or characters inside JSON string values. Write na
   "linkedin_copy": "...",
   "x_copy": "...",
   "facebook_copy": "...",
-  "pinterest_copy": "..."
+  "instagram_copy": "...",
+  "pinterest_copy": "...",
+  "instagram_image_prompt": "..."
 }
 """
 
@@ -143,7 +174,8 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 for key in ["generation_ready", "push_success", "active_title",
-            "active_content", "dist_data", "seo_data"]:
+            "active_content", "dist_data", "seo_data", "instagram_copy",
+            "instagram_image_prompt"]:
     if key not in st.session_state:
         st.session_state[key] = False if key in ["generation_ready", "push_success"] else None
 
@@ -155,6 +187,13 @@ def strip_citations(text: str) -> str:
     text = re.sub(r'(\[\d+\])+', '', text)
     text = text.replace('\"', '"').replace("\'", "'")
     text = text.replace('\\n', '\n').replace('\\t', '\t')
+    return text.strip()
+
+
+def strip_formatting(text: str) -> str:
+    """Remove asterisks and dash bullets from social copy."""
+    text = re.sub(r'\*+', '', text)
+    text = re.sub(r'(?m)^\s*-\s+', '', text)
     return text.strip()
 
 
@@ -290,7 +329,14 @@ def generate_distribution(title: str, content: str) -> dict:
     result = safe_parse_json(text)
     if isinstance(result, list):
         result = result[0]
-    return {k: strip_citations(v) if isinstance(v, str) else v for k, v in result.items()}
+    cleaned = {}
+    for k, v in result.items():
+        if isinstance(v, str):
+            v = strip_citations(v)
+            if k in ["linkedin_copy", "facebook_copy", "instagram_copy", "x_copy", "pinterest_copy"]:
+                v = strip_formatting(v)
+        cleaned[k] = v
+    return cleaned
 
 
 def generate_seo(title: str, content: str) -> dict:
@@ -333,7 +379,9 @@ def push_to_wordpress(title: str, content: str, dist: dict, seo: dict) -> bool:
             "linkedin_copy":        dist.get("linkedin_copy", ""),
             "x_copy":               dist.get("x_copy", ""),
             "facebook_copy":        dist.get("facebook_copy", ""),
+            "instagram_copy":       dist.get("instagram_copy", ""),
             "pinterest_copy":       dist.get("pinterest_copy", ""),
+            "instagram_image_prompt": dist.get("instagram_image_prompt", ""),
             "_yoast_wpseo_title":   seo.get("seo_title", ""),
             "_yoast_wpseo_metadesc":seo.get("seo_description", ""),
             "rank_math_focus_keyword": seo.get("seo_tags", ""),
@@ -493,8 +541,14 @@ if st.session_state.generation_ready:
                 st.markdown("**👥 Facebook**")
                 st.text(dist.get("facebook_copy", ""))
             st.markdown("---")
+            st.markdown("**📸 Instagram**")
+            st.text(dist.get("instagram_copy", ""))
+            st.markdown("---")
             st.markdown("**📌 Pinterest**")
-            st.caption(dist.get("pinterest_copy", ""))
+            st.text(dist.get("pinterest_copy", ""))
+            st.markdown("---")
+            st.markdown("**🖼️ Instagram Image Prompt**")
+            st.code(dist.get("instagram_image_prompt", ""), language="text")
 
         with tab_seo:
             seo = st.session_state.seo_data or {}
