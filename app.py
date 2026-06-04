@@ -10,7 +10,6 @@ import os
 load_dotenv()
 
 PERPLEXITY_API_KEY = os.getenv("PERPLEXITY_API_KEY", "")
-GEMINI_API_KEY     = os.getenv("GEMINI_API_KEY", "")
 WP_URL             = os.getenv("WP_URL", "")
 WP_USERNAME        = os.getenv("WP_USERNAME", "admin")
 WP_APP_PASSWORD    = os.getenv("WP_APP_PASSWORD", "")
@@ -305,51 +304,22 @@ def safe_parse_json(text: str):
         return result
     raise ValueError(f"Could not parse JSON. Raw: {text[:400]}")
 
-def call_gemini(prompt: str) -> str:
-    """Call Gemini 2.0 Flash with Google Search grounding for real, verified news URLs."""
-    if not GEMINI_API_KEY:
-        raise Exception("GEMINI_API_KEY is missing from .env / secrets.")
-    url = (
-        f"https://generativelanguage.googleapis.com/v1beta/models/"
-        f"gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}"
-    )
-    payload = {
-        "contents": [{"parts": [{"text": prompt}]}],
-        "tools": [{"google_search": {}}],
-        "generationConfig": {
-            "temperature": 0.1,
-            "maxOutputTokens": 8192,
-        }
-    }
-    try:
-        r = requests.post(url, json=payload, timeout=120)
-    except requests.exceptions.Timeout:
-        raise Exception("Gemini API timed out after 120s. Try again.")
-    except requests.exceptions.ConnectionError:
-        raise Exception("Could not connect to Gemini API. Check network.")
-
-    if r.status_code != 200:
-        raise Exception(f"Gemini API error ({r.status_code}): {r.text[:400]}")
-
-    data = r.json()
-    try:
-        return data["candidates"][0]["content"]["parts"][0]["text"]
-    except (KeyError, IndexError):
-        raise Exception(f"Unexpected Gemini response: {str(data)[:300]}")
-
-
 def fetch_news_seeds() -> list:
-    """Fetch real estate news via Gemini with Google Search grounding — real URLs only."""
+    """Fetch real estate news via Perplexity sonar-pro with live web search."""
     today_str = date.today().strftime("%Y-%m-%d")
-    prompt = (
-        NEWS_DISCOVERY_PROMPT.replace("{today}", today_str)
-        + f"\n\nToday is {today_str}. Search Google News right now. "
-          "Every URL must be a real working article link from a named publication. "
-          "Do NOT invent or hallucinate URLs — if you cannot find a real URL, exclude the story. "
-          "Return ONLY the JSON array. No markdown fences. No preamble."
-    )
-    text = call_gemini(prompt)
-    text = re.sub(r'```json|```', '', text).strip()
+    prompt = NEWS_DISCOVERY_PROMPT.replace("{today}", today_str)
+    msgs = [
+        {"role": "system", "content": prompt},
+        {"role": "user", "content": (
+            f"Search the web right now for real estate news published today {today_str}. "
+            "Return at least 20 items across all regions and categories. "
+            "Exclude listings. Translate non-English sources to English. "
+            "Every URL must be a real article link you actually retrieved — "
+            "if you cannot confirm a URL exists, exclude that story entirely. "
+            "Return ONLY the JSON array."
+        )}
+    ]
+    text = call_perplexity(msgs, model="sonar-pro")
     result = safe_parse_json(text)
     if isinstance(result, list):
         return result
