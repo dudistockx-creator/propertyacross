@@ -10,6 +10,7 @@ import os
 load_dotenv()
 
 PERPLEXITY_API_KEY = os.getenv("PERPLEXITY_API_KEY", "")
+GEMINI_API_KEY     = os.getenv("GEMINI_API_KEY", "")
 WP_URL             = os.getenv("WP_URL", "")
 WP_USERNAME        = os.getenv("WP_USERNAME", "admin")
 WP_APP_PASSWORD    = os.getenv("WP_APP_PASSWORD", "")
@@ -44,18 +45,43 @@ RULES:
 - Minimum 20 news items total
 - NO property listings (for sale / for rent ads) — news only
 - Include non-English sources — translate title and description to English, keep original URL
-- For each item: title (English), 2-sentence description (English), source URL, date ({today} only), region, asset_category
-- Prioritise stories with yield figures, investment amounts, developer names, or policy angles
+- Research each story fully before returning it — do not summarise in 2 sentences
+- title: Specific and informative — include city, asset type, and key angle (e.g. "Lisbon Developer Vanguard Launches 320-Unit BTR Tower Targeting 6.2% Yield")
+- description: 4-6 sentences covering ALL of the following that are relevant:
+    1. What happened: deal, launch, acquisition, funding round, policy change, project announcement
+    2. Investment / project value in local currency AND USD equivalent
+    3. Developer name(s): full company name, country of origin, notable past projects
+    4. Architect / design firm name if mentioned or findable via web search
+    5. City administration or government body involved: permits, zoning, incentives, CBI program name
+    6. Financial data: yield figures, price per sqm, rental rates, occupancy rates
+    7. Timeline: construction start, completion date, delivery phases
+    8. Buyer / tenant profile: institutional investors, retail buyers, expats, tech firms, etc.
+- Prioritise stories with named companies, deal values, yield figures, and government involvement
+
+URL INTEGRITY — THIS IS CRITICAL — READ CAREFULLY:
+- ONLY return URLs that were directly retrieved and confirmed in your live web search results this session
+- NEVER construct, guess, or infer a URL — even if you know the publisher's domain well
+- NEVER return a homepage or section URL (e.g. bloomberg.com or reuters.com/markets) — only exact article URLs
+- NEVER fabricate or approximate a URL path — if you are not 100% certain the URL exists, do not include it
+- If you cannot find a verified, clickable article URL for a story, DROP that story entirely — do not include it with a guessed URL
+- Include a "source" field with the real publication name (e.g. "Bloomberg", "Reuters", "The National", "Bangkok Post")
+- Each URL must be from a recognised news outlet, industry publication, or official government/company press release
+- Before including any item, ask yourself: "Did my search engine actually return this exact URL?" — if the answer is no, exclude the item
 
 Output ONLY a valid JSON array — no markdown fences, no preamble:
 [
   {{
-    "title": "English title here",
-    "description": "2-sentence English description with key data points.",
-    "url": "https://source-url.com/article",
+    "title": "Specific title with city + asset type + key angle",
+    "description": "4-6 sentences: deal details, developer, architect, city/government body, yield/price data, timeline, buyer profile.",
+    "url": "https://exact-article-url-from-search-results.com/article/slug",
+    "source": "Publication name e.g. Reuters, Bloomberg, The National",
     "date": "{today}",
     "region": "Western Europe",
-    "asset_category": "COMMERCIAL — Office Spaces"
+    "asset_category": "COMMERCIAL — Office Spaces",
+    "developer": "Full developer / company name(s) or N/A",
+    "architect": "Architect or design firm or N/A",
+    "city_body": "Government / municipal body or N/A",
+    "deal_value": "Value in local currency + USD equivalent or N/A"
   }}
 ]
 """
@@ -101,7 +127,7 @@ SEO_PROMPT = """
 You are an expert SEO specialist for PropertyAcross.com.
 Given the article title and content, generate three SEO fields.
 
-- seo_title: Maximum 60 characters. Compelling, keyword-rich, location + asset type. No clickbait.
+- seo_title: Maximum 60 characters. Write like a headline editor at The Economist — punchy, specific, intriguing. Lead with the most surprising number or angle. Include location + asset type naturally. Must make someone stop scrolling. No generic phrases like "Guide to" or "Everything About". No clickbait. Examples of good style: "Athens Studios: 6.8% Yield Beats London by 3x" or "Why Dubai Data Centers Outperform Apartments in 2026".
 - seo_description: Maximum 155 characters. One punchy sentence with key data point. Makes people click.
 - seo_tags: 8-12 comma-separated keyword tags. Mix broad + micro-topic. No hashtags.
 
@@ -175,6 +201,16 @@ st.markdown("""
     .news-desc  { font-size: 12px; color: #4a5568; margin: 0 0 5px 0; line-height: 1.4; }
     .news-url   { font-size: 11px; color: #2b6cb0; }
     .fetch-info { font-size: 12px; color: #718096; margin-bottom: 8px; }
+    .meta-pill  {
+        display: inline-block;
+        font-size: 11px; font-weight: 500;
+        padding: 2px 8px; border-radius: 20px;
+        margin-right: 5px; margin-bottom: 4px;
+    }
+    .dev-pill   { background: #e0f2fe; color: #0369a1; }
+    .arch-pill  { background: #f3e8ff; color: #7e22ce; }
+    .city-pill  { background: #dcfce7; color: #166534; }
+    .val-pill   { background: #fff7ed; color: #c2410c; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -269,18 +305,51 @@ def safe_parse_json(text: str):
         return result
     raise ValueError(f"Could not parse JSON. Raw: {text[:400]}")
 
+def call_gemini(prompt: str) -> str:
+    """Call Gemini 2.0 Flash with Google Search grounding for real, verified news URLs."""
+    if not GEMINI_API_KEY:
+        raise Exception("GEMINI_API_KEY is missing from .env / secrets.")
+    url = (
+        f"https://generativelanguage.googleapis.com/v1beta/models/"
+        f"gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}"
+    )
+    payload = {
+        "contents": [{"parts": [{"text": prompt}]}],
+        "tools": [{"google_search": {}}],
+        "generationConfig": {
+            "temperature": 0.1,
+            "maxOutputTokens": 8192,
+        }
+    }
+    try:
+        r = requests.post(url, json=payload, timeout=120)
+    except requests.exceptions.Timeout:
+        raise Exception("Gemini API timed out after 120s. Try again.")
+    except requests.exceptions.ConnectionError:
+        raise Exception("Could not connect to Gemini API. Check network.")
+
+    if r.status_code != 200:
+        raise Exception(f"Gemini API error ({r.status_code}): {r.text[:400]}")
+
+    data = r.json()
+    try:
+        return data["candidates"][0]["content"]["parts"][0]["text"]
+    except (KeyError, IndexError):
+        raise Exception(f"Unexpected Gemini response: {str(data)[:300]}")
+
+
 def fetch_news_seeds() -> list:
+    """Fetch real estate news via Gemini with Google Search grounding — real URLs only."""
     today_str = date.today().strftime("%Y-%m-%d")
-    prompt = NEWS_DISCOVERY_PROMPT.replace("{today}", today_str)
-    msgs = [
-        {"role": "system", "content": prompt},
-        {"role": "user",   "content": (
-            f"Search right now for real estate news published today {today_str}. "
-            "Return at least 20 items across all regions and categories. "
-            "Exclude listings. Translate non-English to English. Return JSON array only."
-        )}
-    ]
-    text = call_perplexity(msgs, model="sonar-pro")
+    prompt = (
+        NEWS_DISCOVERY_PROMPT.replace("{today}", today_str)
+        + f"\n\nToday is {today_str}. Search Google News right now. "
+          "Every URL must be a real working article link from a named publication. "
+          "Do NOT invent or hallucinate URLs — if you cannot find a real URL, exclude the story. "
+          "Return ONLY the JSON array. No markdown fences. No preamble."
+    )
+    text = call_gemini(prompt)
+    text = re.sub(r'```json|```', '', text).strip()
     result = safe_parse_json(text)
     if isinstance(result, list):
         return result
@@ -355,30 +424,86 @@ def generate_seo(title: str, content: str) -> dict:
         "seo_tags":        strip_citations(result.get("seo_tags", "")),
     }
 
+def get_or_create_wp_tags(tag_names: list, headers: dict) -> list:
+    """Look up existing WP tags by name, create missing ones. Returns list of tag IDs."""
+    tag_ids = []
+    for name in tag_names:
+        name = name.strip()
+        if not name:
+            continue
+        try:
+            # Search for existing tag
+            r = requests.get(
+                f"{WP_URL}/tags",
+                headers=headers,
+                params={"search": name, "per_page": 5},
+                timeout=15
+            )
+            if r.status_code == 200:
+                matches = [t for t in r.json() if t.get("name","").lower() == name.lower()]
+                if matches:
+                    tag_ids.append(matches[0]["id"])
+                    continue
+            # Create new tag
+            r2 = requests.post(
+                f"{WP_URL}/tags",
+                headers=headers,
+                json={"name": name},
+                timeout=15
+            )
+            if r2.status_code == 201:
+                tag_ids.append(r2.json()["id"])
+        except Exception:
+            continue  # Skip tag silently on error
+    return tag_ids
+
+
 def push_to_wordpress(title: str, content: str, dist: dict, seo: dict) -> bool:
     token = base64.b64encode(f"{WP_USERNAME}:{WP_APP_PASSWORD}".encode()).decode()
+    headers = {
+        "Authorization": f"Basic {token}",
+        "Content-Type": "application/json",
+        "User-Agent": "Mozilla/5.0",
+        "Accept": "application/json",
+    }
+
+    # Resolve tag names → WP tag IDs
+    raw_tags   = seo.get("seo_tags", "")
+    tag_names  = [t.strip() for t in raw_tags.split(",") if t.strip()]
+    tag_ids    = get_or_create_wp_tags(tag_names, headers) if tag_names else []
+    focus_kw   = tag_names[0] if tag_names else ""
+
     payload = {
-        "title": title, "content": content, "status": "draft",
+        "title":   title,
+        "content": content,
+        "status":  "draft",
+        "tags":    tag_ids,          # ← WordPress native tags taxonomy
         "meta": {
-            "substack_text":          dist.get("substack_text",""),
-            "medium_text":            dist.get("medium_text",""),
-            "linkedin_copy":          dist.get("linkedin_copy",""),
-            "x_copy":                 dist.get("x_copy",""),
-            "facebook_copy":          dist.get("facebook_copy",""),
-            "pinterest_copy":         dist.get("pinterest_copy",""),
-            "_yoast_wpseo_title":     seo.get("seo_title",""),
-            "_yoast_wpseo_metadesc":  seo.get("seo_description",""),
-            "rank_math_focus_keyword":seo.get("seo_tags",""),
-            "_yoast_wpseo_focuskw":   seo.get("seo_tags","").split(",")[0].strip() if seo.get("seo_tags") else "",
+            # Distribution copy
+            "substack_text":  dist.get("substack_text", ""),
+            "medium_text":    dist.get("medium_text", ""),
+            "linkedin_copy":  dist.get("linkedin_copy", ""),
+            "x_copy":         dist.get("x_copy", ""),
+            "facebook_copy":  dist.get("facebook_copy", ""),
+            "pinterest_copy": dist.get("pinterest_copy", ""),
+            # Yoast SEO fields
+            "_yoast_wpseo_title":    seo.get("seo_title", ""),
+            "_yoast_wpseo_metadesc": seo.get("seo_description", ""),
+            "_yoast_wpseo_focuskw":  focus_kw,
+            # Rank Math fields
+            "rank_math_title":           seo.get("seo_title", ""),
+            "rank_math_description":     seo.get("seo_description", ""),
+            "rank_math_focus_keyword":   focus_kw,
+            # All tags as comma string (fallback for custom SEO plugins)
+            "seo_tags":                  raw_tags,
         }
     }
+
     try:
-        r = requests.post(
-            f"{WP_URL}/posts",
-            headers={"Authorization": f"Basic {token}", "Content-Type": "application/json"},
-            json=payload, timeout=45
-        )
+        r = requests.post(f"{WP_URL}/posts", headers=headers, json=payload, timeout=45)
         if r.status_code == 201:
+            post_id = r.json().get("id", "?")
+            st.caption(f"WordPress post ID: {post_id} | Tags applied: {len(tag_ids)}/{len(tag_names)}")
             return True
         st.error(f"WordPress push failed ({r.status_code}): {r.text[:300]}")
     except Exception as e:
@@ -499,7 +624,7 @@ with main_tab_news:
                 )
 
         if fetch_btn:
-            with st.spinner("Searching global real estate news via Perplexity..."):
+            with st.spinner("Searching Google News via Gemini — real sources only..."):
                 try:
                     items = fetch_news_seeds()
                     st.session_state.news_items = items
@@ -545,11 +670,16 @@ with main_tab_news:
 
             # News cards with checkboxes
             for orig_idx, item in filtered:
-                region  = item.get("region","")
-                cat     = item.get("asset_category","")
-                title   = item.get("title","No title")
-                desc    = item.get("description","")
-                url     = item.get("url","")
+                region     = item.get("region","")
+                cat        = item.get("asset_category","")
+                title      = item.get("title","No title")
+                desc       = item.get("description","")
+                url        = item.get("url","")
+                source     = item.get("source","")
+                developer  = item.get("developer","")
+                architect  = item.get("architect","")
+                city_body  = item.get("city_body","")
+                deal_value = item.get("deal_value","")
 
                 is_checked = orig_idx in st.session_state.selected_indices
 
@@ -564,12 +694,25 @@ with main_tab_news:
                 elif not checked and orig_idx in st.session_state.selected_indices:
                     st.session_state.selected_indices.remove(orig_idx)
 
+                # Build meta pills for the extra fields
+                meta_pills = ""
+                if developer and developer != "N/A":
+                    meta_pills += f'<span class="meta-pill dev-pill">🏗️ {developer}</span>'
+                if architect and architect != "N/A":
+                    meta_pills += f'<span class="meta-pill arch-pill">✏️ {architect}</span>'
+                if city_body and city_body != "N/A":
+                    meta_pills += f'<span class="meta-pill city-pill">🏛️ {city_body}</span>'
+                if deal_value and deal_value != "N/A":
+                    meta_pills += f'<span class="meta-pill val-pill">💰 {deal_value}</span>'
+
                 st.markdown(
                     f'<div class="news-card" style="margin-top:-8px">'
                     f'<span class="region-badge">🌍 {region}</span>'
                     f'<span class="cat-badge">{cat}</span>'
-                    f'<p class="news-desc">{desc}</p>'
-                    f'<a class="news-url" href="{url}" target="_blank">🔗 {url[:65]}{"..." if len(url)>65 else ""}</a>'
+                    f'<p class="news-desc" style="margin-top:6px">{desc}</p>'
+                    f'{("<div style=\"margin-bottom:6px\">" + meta_pills + "</div>") if meta_pills else ""}'
+                    f'<a class="news-url" href="{url}" target="_blank">'
+                    f'{"📰 " + source + " — " if source else "🔗 "}{url[:60]}{"..." if len(url)>60 else ""}</a>'
                     f'</div>',
                     unsafe_allow_html=True
                 )
@@ -586,7 +729,22 @@ with main_tab_news:
                     batch = []
                     for idx in st.session_state.selected_indices:
                         item = items[idx]
-                        seed_text = f"{item.get('title','')}\n\n{item.get('description','')}\n\nSource: {item.get('url','')}"
+                        extras = []
+                        if item.get("developer","") not in ("","N/A"):
+                            extras.append(f"Developer: {item['developer']}")
+                        if item.get("architect","") not in ("","N/A"):
+                            extras.append(f"Architect: {item['architect']}")
+                        if item.get("city_body","") not in ("","N/A"):
+                            extras.append(f"Government/City body: {item['city_body']}")
+                        if item.get("deal_value","") not in ("","N/A"):
+                            extras.append(f"Deal value: {item['deal_value']}")
+                        extras_str = ("\n" + "\n".join(extras)) if extras else ""
+                        seed_text = (
+                            f"{item.get('title','')}\n\n"
+                            f"{item.get('description','')}"
+                            f"{extras_str}\n\n"
+                            f"Source: {item.get('url','')}"
+                        )
                         batch.append({"seed": seed_text, "item": item})
                     st.session_state.current_batch = batch
                     st.session_state.batch_index   = 0
@@ -608,7 +766,7 @@ with main_tab_news:
             icons = {"pending":"🔘","active":"🔵","done":"✅","error":"❌"}
             slot.markdown(f"{icons.get(state,'🔘')} **{label}**")
 
-        stage(s1, "Article — sonar-pro + web search")
+        stage(s1, "Article — Perplexity sonar-pro + web search")
         stage(s2, "Newsletters & socials — sonar")
         stage(s3, "SEO title, description & tags — sonar")
 
@@ -624,10 +782,10 @@ with main_tab_news:
                 f"⚙️ Building article {bidx+1} of {total}...", expanded=True
             ) as status:
                 try:
-                    stage(s1, "Article — sonar-pro + web search", "active")
+                    stage(s1, "Article — Perplexity sonar-pro + web search", "active")
                     status.update(label=f"✍️ [{bidx+1}/{total}] Researching and writing article...")
                     article = generate_article(current["seed"])
-                    stage(s1, "Article — sonar-pro + web search", "done")
+                    stage(s1, "Article — Perplexity sonar-pro + web search", "done")
 
                     stage(s2, "Newsletters & socials — sonar", "active")
                     status.update(label=f"📣 [{bidx+1}/{total}] Writing newsletters and social copy...")
@@ -726,7 +884,7 @@ with main_tab_manual:
             icons = {"pending":"🔘","active":"🔵","done":"✅","error":"❌"}
             slot.markdown(f"{icons.get(state,'🔘')} **{label}**")
 
-        mstage(ms1, "Article — sonar-pro + web search")
+        mstage(ms1, "Article — Perplexity sonar-pro + web search")
         mstage(ms2, "Newsletters & socials — sonar")
         mstage(ms3, "SEO title, description & tags — sonar")
 
@@ -738,12 +896,12 @@ with main_tab_manual:
         with col_right_m:
             with st.status("⚙️ Building asset cluster...", expanded=True) as status:
                 try:
-                    mstage(ms1, "Article — sonar-pro + web search", "active")
+                    mstage(ms1, "Article — Perplexity sonar-pro + web search", "active")
                     status.update(label="✍️ Researching and writing article...")
                     article = generate_article(seed)
                     st.session_state.active_title   = article["title"]
                     st.session_state.active_content = article["main_content"]
-                    mstage(ms1, "Article — sonar-pro + web search", "done")
+                    mstage(ms1, "Article — Perplexity sonar-pro + web search", "done")
 
                     mstage(ms2, "Newsletters & socials — sonar", "active")
                     status.update(label="📣 Writing newsletters and social copy...")
